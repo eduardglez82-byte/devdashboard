@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/vite/bin/vite.js build)",
-      "Bash(php artisan *)"
-    ]
-  }
-}
