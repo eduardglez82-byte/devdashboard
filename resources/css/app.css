@@ -1,0 +1,7 @@
+/* Importa el sistema de diseño principal */
+@import '../js/styles/theme.css';
+
+/* Tailwind directives si lo usas en el futuro. */
+/* @tailwind base; */
+/* @tailwind components; */
+/* @tailwind utilities; */
