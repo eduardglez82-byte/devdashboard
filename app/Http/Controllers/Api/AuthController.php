@@ -10,8 +10,7 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     /**
-     * POST /api/login
-     * Autenticación por cookie (Sanctum SPA mode).
+     * POST /api/login (Sanctum SPA mode)
      */
     public function login(Request $request)
     {
@@ -26,7 +25,9 @@ class AuthController extends Controller
             ]);
         }
 
-        $request->session()->regenerate();
+        if ($request->hasSession()) {
+            $request->session()->regenerate();
+        }
 
         return response()->json([
             'user' => $request->user(),
@@ -39,8 +40,11 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         Auth::guard('web')->logout();
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
+
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
 
         return response()->json(['message' => 'logged_out']);
     }

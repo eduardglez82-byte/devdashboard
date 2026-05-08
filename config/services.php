@@ -36,6 +36,13 @@ return [
         'model'   => env('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001'),
     ],
 
+    'openrouter' => [
+        'api_key' => env('OPENROUTER_API_KEY', ''),
+        'model'   => env('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free'),
+        'referer' => env('OPENROUTER_REFERER', env('APP_URL', 'http://localhost')),
+        'title'   => env('OPENROUTER_TITLE', env('APP_NAME', 'DevDashboard')),
+    ],
+
     'spotify' => [
         'client_id' => env('SPOTIFY_CLIENT_ID', ''),
     ],

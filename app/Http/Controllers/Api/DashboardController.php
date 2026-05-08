@@ -18,39 +18,29 @@ class DashboardController extends Controller
         if ($role === 'admin') {
             $empresas_total = Empresa::count();
             $usuarios_total = User::count();
-            $tareas_total   = Tarea::count();
-
-            $tareas_por_estado = Tarea::selectRaw('estado, COUNT(*) as total')
-                ->groupBy('estado')
-                ->pluck('total', 'estado');
-
+            $tareasQuery    = Tarea::query();
             $empresa_nombre = null;
         } else {
-            // admin_empresa or usuario_empresa — filter by empresa_id
             $empresa_id = $user->empresa_id;
 
-            $empresas_total = $empresa_id ? Empresa::where('id', $empresa_id)->count() : 0;
+            $empresas_total = $empresa_id ? Empresa::where('_id', $empresa_id)->count() : 0;
             $usuarios_total = $empresa_id ? User::where('empresa_id', $empresa_id)->count() : 0;
-            $tareas_total   = $empresa_id ? Tarea::where('empresa_id', $empresa_id)->count() : 0;
-
-            $tareas_por_estado = $empresa_id
-                ? Tarea::selectRaw('estado, COUNT(*) as total')
-                    ->where('empresa_id', $empresa_id)
-                    ->groupBy('estado')
-                    ->pluck('total', 'estado')
-                : collect([]);
+            $tareasQuery    = $empresa_id ? Tarea::where('empresa_id', $empresa_id) : Tarea::whereRaw(['_id' => null]);
 
             $empresa_nombre = $user->empresa ? $user->empresa->nombre : null;
         }
 
+        $tareas_total = (clone $tareasQuery)->count();
+        $estados      = (clone $tareasQuery)->get(['estado'])->groupBy('estado')->map->count();
+
         return response()->json([
-            'empresas'            => $empresas_total,
-            'usuarios'            => $usuarios_total,
-            'tareas_total'        => $tareas_total,
-            'tareas_pendiente'    => $tareas_por_estado['pendiente']    ?? 0,
-            'tareas_en_progreso'  => $tareas_por_estado['en_progreso']  ?? 0,
-            'tareas_completado'   => $tareas_por_estado['completado']   ?? 0,
-            'empresa_nombre'      => $empresa_nombre,
+            'empresas'           => $empresas_total,
+            'usuarios'           => $usuarios_total,
+            'tareas_total'       => $tareas_total,
+            'tareas_pendiente'   => $estados['pendiente']    ?? 0,
+            'tareas_en_progreso' => $estados['en_progreso']  ?? 0,
+            'tareas_completado'  => $estados['completado']   ?? 0,
+            'empresa_nombre'     => $empresa_nombre,
         ]);
     }
 }

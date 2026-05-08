@@ -103,6 +103,19 @@ html, body, #root {
     height: 100%;
 }
 
+html {
+    /* respeta safe-area de notch/dynamic island en iOS */
+    --safe-top:    env(safe-area-inset-top, 0px);
+    --safe-right:  env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left:   env(safe-area-inset-left, 0px);
+    /* fallback primero, override después si soporta dvh */
+    --vh-app: 100vh;
+}
+@supports (height: 100dvh) {
+    html { --vh-app: 100dvh; }
+}
+
 body {
     font-family: var(--font-sans);
     font-size: 14px;
@@ -111,6 +124,20 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.2s ease, color 0.2s ease;
+    /* iOS rebote y selección al tocar */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    overscroll-behavior-y: none;
+}
+
+/* En modo standalone (PWA instalada) NO ponemos padding al body —
+   el topbar y los sidebars manejan su propio safe-area-top.
+   El body con padding-top desplaza todo y rompe el sticky/fixed. */
+
+/* Inputs no hacen zoom automático en iOS si tienen ≥16px */
+input, select, textarea { font-size: 16px; }
+@media (min-width: 769px) {
+    input, select, textarea { font-size: inherit; }
 }
 
 button { font-family: inherit; cursor: pointer; }
@@ -135,10 +162,11 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .auth-layout {
     position: relative;
-    min-height: 100vh;
+    min-height: var(--vh-app);
     display: grid;
     place-items: center;
-    padding: 24px;
+    padding: max(24px, var(--safe-top)) max(24px, var(--safe-right))
+             max(24px, var(--safe-bottom)) max(24px, var(--safe-left));
     overflow: hidden;
     background: var(--bg);
 }
@@ -302,7 +330,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 .dash-layout {
     display: grid;
     grid-template-columns: var(--sidebar-w) 1fr;
-    height: 100vh;
+    height: var(--vh-app);
     overflow: hidden;
     transition: grid-template-columns 0.22s ease;
 }
@@ -316,19 +344,27 @@ ul { list-style: none; margin: 0; padding: 0; }
     flex-direction: column;
     min-width: 0;
     overflow: hidden;
-    height: 100vh;
+    height: var(--vh-app);
 }
 
 .dash-layout__body {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;            /* ← antes era grid */
+    flex-direction: row;
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;       /* contenedor para el drawer móvil */
 }
 
-.dash-layout--has-right .dash-layout__body {
-    grid-template-columns: 1fr var(--right-sidebar-w);
+/* El contenido principal flexea — toma todo el ancho disponible */
+.dash-layout__body > .dash-layout__content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Sidebar derecho ocupa su ancho fijo cuando está visible */
+.dash-layout--has-right .dash-layout__body > .right-sidebar {
+    flex: 0 0 var(--right-sidebar-w);
 }
 
 .dash-layout__content {
@@ -503,14 +539,17 @@ ul { list-style: none; margin: 0; padding: 0; }
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: var(--topbar-h);
-    padding: 0 24px;
+    /* La altura crece con el safe-area-top (notch) pero los botones
+       siguen centrados en la zona "útil" del topbar gracias al padding-top.
+       border-box hace que padding cuente dentro de height. */
+    box-sizing: border-box;
+    height: calc(var(--topbar-h) + var(--safe-top, 0px));
+    padding: var(--safe-top, 0px) 24px 0;
     background: var(--bg-elev);
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
-    z-index: 20;
-    backdrop-filter: blur(8px);
+    z-index: 50;
 }
 
 .topbar__left, .topbar__right {
@@ -872,7 +911,8 @@ ul { list-style: none; margin: 0; padding: 0; }
     display: flex;
     flex-direction: column;
     gap: 24px;
-    max-width: 1200px;
+    width: 100%;
+    /* sin max-width: queremos que el contenido se expanda al colapsar los sidebars */
 }
 
 .page__header {
@@ -1510,10 +1550,7 @@ ul { list-style: none; margin: 0; padding: 0; }
     .dash-layout--collapsed {
         grid-template-columns: var(--sidebar-w-collapsed) 1fr;
     }
-    .dash-layout--has-right .dash-layout__body {
-        grid-template-columns: 1fr;
-    }
-    .right-sidebar { display: none; }
+    /* (body ahora usa flex; en móvil el right-sidebar es drawer overlay) */
     .dash-layout__content { padding: 20px; }
 }
 
@@ -1894,8 +1931,12 @@ ul { list-style: none; margin: 0; padding: 0; }
     padding: 12px;
     cursor: pointer;
     position: relative;
-    transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s, opacity 0.15s;
     user-select: none;
+    -webkit-user-select: none;
+    /* Permite scroll vertical normal pero atrapamos el long-press para drag */
+    touch-action: pan-y;
+    -webkit-touch-callout: none;
 }
 
 .kanban-card:hover {
@@ -1904,9 +1945,57 @@ ul { list-style: none; margin: 0; padding: 0; }
     transform: translateY(-1px);
 }
 
-.kanban-card[draggable="true"]:active {
-    opacity: 0.6;
+/* Card que está siendo arrastrada — semi-transparente en su posición original */
+.kanban-card--dragging {
+    opacity: 0.35;
+    transform: none !important;
+    box-shadow: none !important;
+    border-style: dashed;
+}
+
+/* ── Ghost que sigue al puntero ── */
+.kanban-ghost {
+    position: fixed;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 200;
+    will-change: transform;
+    /* Sin transition: actualizamos transform en tiempo real */
+}
+.kanban-ghost > .kanban-card {
+    width: 100%;
+    height: 100%;
+    box-shadow: 0 24px 60px -12px rgba(0,0,0,0.6),
+                0 8px 24px rgba(0,0,0,0.3);
+    background: var(--panel);
+    border-color: var(--acc);
     cursor: grabbing;
+    /* Pequeño tilt visual */
+    animation: kanban-ghost-spawn 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes kanban-ghost-spawn {
+    from { transform: scale(0.92); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+}
+
+/* Mientras hay drag activo: bloqueamos scroll del body y ocultamos texto seleccionable */
+body.kanban-dragging {
+    overflow: hidden !important;
+    touch-action: none !important;
+    -webkit-user-select: none;
+    cursor: grabbing;
+}
+body.kanban-dragging .kanban-card { touch-action: none; }
+body.kanban-dragging .dash-layout__content { overflow: hidden !important; }
+
+/* Columna destino — más prominente cuando hay drag activo */
+body.kanban-dragging .kanban-col {
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+body.kanban-dragging .kanban-col--over {
+    border-color: var(--acc);
+    box-shadow: 0 0 0 3px var(--acc-soft), 0 12px 30px -10px var(--acc);
+    transform: translateY(-2px);
 }
 
 .kanban-card__drag-handle {
@@ -2206,59 +2295,179 @@ ul { list-style: none; margin: 0; padding: 0; }
    ========================================================= */
 
 .rs-panel-root {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+    --rs-accent: var(--acc);
 }
 
-/* Tab bar */
+/* ── Tab bar (icon-only con indicador deslizante) ── */
 .rs-tabs {
-    display: flex;
-    gap: 1px;
-    padding: 6px 6px 0;
+    --rs-pad-y:     8px;
+    --rs-pad-l:     8px;
+    --rs-pad-r:     8px;
+
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: var(--rs-pad-y) var(--rs-pad-r) var(--rs-pad-y) var(--rs-pad-l);
+    gap: 0;
     background: var(--bg-elev);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    flex-wrap: wrap;
+    isolation: isolate;
+}
+
+.rs-tabs__indicator {
+    position: absolute;
+    top: var(--rs-pad-y);
+    left: var(--rs-pad-l);
+    /* El ancho debe coincidir EXACTO con cada celda del grid:
+       (ancho útil) / nº de tabs.  El "ancho útil" = 100% − padding-izq − padding-der */
+    width: calc((100% - var(--rs-pad-l) - var(--rs-pad-r)) / var(--rs-tab-count));
+    height: calc(100% - var(--rs-pad-y) * 2);
+    background: var(--rs-accent);
+    border-radius: 10px;
+    z-index: 0;
+    transition: transform 0.32s cubic-bezier(0.34, 1.36, 0.64, 1), background 0.25s ease;
+    box-shadow: 0 4px 14px -4px var(--rs-accent);
+    opacity: 0.95;
+}
+
+/* Mantener proporción cuando hay menos tabs (responsive) */
+@media (max-width: 360px) {
+    .rs-tab { height: 34px; }
+}
+
+/* Glow del indicador (pseudo-element para no afectar el filtro) */
+.rs-tabs__indicator::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 12px;
+    background: inherit;
+    filter: blur(10px);
+    opacity: 0.35;
+    z-index: -1;
 }
 
 .rs-tab {
-    flex: 1;
-    min-width: 36px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 6px 4px;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    color: var(--fg-subtle);
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    height: 36px;
     border: none;
     background: transparent;
+    border-radius: 10px;
+    color: var(--fg-subtle);
     cursor: pointer;
-    font-size: 9px;
-    font-family: var(--font-mono);
-    letter-spacing: 0.02em;
-    transition: background 0.15s, color 0.15s;
-    white-space: nowrap;
+    transition: color 0.18s ease, transform 0.15s;
+    padding: 0;
 }
 
-.rs-tab:hover { background: var(--panel-hover); color: var(--fg); }
+.rs-tab:hover:not(.rs-tab--active) {
+    color: var(--rs-tab-accent, var(--fg));
+    transform: translateY(-1px);
+}
+
 .rs-tab--active {
-    background: var(--panel);
-    color: var(--acc);
-    border: 1px solid var(--border);
-    border-bottom-color: var(--panel);
-    margin-bottom: -1px;
-    padding-bottom: 7px;
+    color: #fff;
 }
 
-/* Panels */
+/* En tema claro el accent verde + texto blanco se ve bien;
+   para accents oscuros (como amarillo) usamos color contraste */
+:root.light .rs-tab--active {
+    color: #fff;
+    text-shadow: 0 0 6px rgba(0,0,0,0.25);
+}
+
+/* ── Panel head (con accent color del tab activo) ── */
+.rs-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--rs-accent) 9%, var(--bg-elev)) 0%,
+        var(--bg-elev) 100%
+    );
+    flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+    animation: rs-head-in 0.28s ease;
+}
+@keyframes rs-head-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.rs-panel-head::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--rs-accent);
+    opacity: 0.85;
+}
+
+.rs-panel-head__icon {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    background: var(--rs-accent);
+    color: #fff;
+    border-radius: 9px;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px -4px var(--rs-accent);
+}
+
+.rs-panel-head__text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+.rs-panel-head__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    line-height: 1.2;
+}
+.rs-panel-head__hint {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.02em;
+}
+
+/* ── Panels ── */
 .rs-panels {
     flex: 1;
     overflow-y: auto;
     min-height: 0;
 }
+
+/* Tinte sutil del accent en el fondo de cada panel */
+.rs-panel-wrap > .rs-panel,
+.rs-panel-wrap > .sp-lib,
+.rs-panel-wrap > .sp-setup,
+.rs-panel-wrap > .sp-login {
+    position: relative;
+}
+.rs-panel-wrap > .rs-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 200px;
+    background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--rs-accent) 6%, transparent) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+.rs-panel-wrap > .rs-panel > * { position: relative; z-index: 1; }
 
 .rs-panel {
     padding: 16px;
@@ -2879,63 +3088,7 @@ ul { list-style: none; margin: 0; padding: 0; }
     border-radius: 999px;
 }
 
-/* ── Right sidebar tab bar — compact icon+label ── */
-.rs-tabs {
-    display: flex;
-    padding: 6px 6px 0;
-    gap: 2px;
-    flex-wrap: nowrap;
-    overflow-x: visible;
-    background: var(--bg-elev);
-    border-bottom: 1px solid var(--border);
-}
-
-.rs-tab {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    padding: 7px 2px 6px;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    font-size: 8.5px;
-    font-family: var(--font-mono);
-    letter-spacing: 0;
-    color: var(--fg-subtle);
-    white-space: nowrap;
-    overflow: hidden;
-    transition: background 0.15s, color 0.15s;
-}
-
-.rs-tab:hover {
-    background: var(--panel-hover);
-    color: var(--fg);
-    border-color: transparent;
-    box-shadow: none;
-}
-
-.rs-tab--active {
-    background: var(--acc-soft);
-    color: var(--acc);
-    border: none;
-    box-shadow: inset 0 -2px 0 var(--acc);
-    margin-bottom: 0;
-    padding-bottom: 6px;
-}
-
-.rs-tab--active:hover {
-    background: var(--acc-soft);
-    color: var(--acc);
-}
-
-:root.dark .rs-tab--active {
-    background: rgba(52, 211, 153, 0.1);
-}
+/* (Reglas de .rs-tabs / .rs-tab unificadas arriba; esta sección quedó vacía a propósito) */
 
 /* ── Kanban column headers ── */
 .col--pendiente  .kanban-col__label { color: var(--fg-muted); }
@@ -3082,6 +3235,212 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 
 /* =========================================================
+   SPOTIFY WEB PLAYBACK SDK PLAYER
+   ========================================================= */
+
+.sp-player {
+    --sp-green: #1DB954;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg-sunken) 100%);
+    border-top: 1px solid var(--border);
+    padding: 12px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.sp-player--loading,
+.sp-player--error {
+    align-items: center;
+    text-align: center;
+    padding: 18px 14px;
+    color: var(--fg-muted);
+}
+.sp-player--loading { gap: 10px; flex-direction: row; justify-content: center; font-size: 12px; }
+.sp-player__spin { animation: nota-spin 0.9s linear infinite; }
+
+.sp-player__err-title { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--fg); }
+.sp-player__err-sub   { margin: 0; font-size: 11px; color: var(--fg-subtle); line-height: 1.5; max-width: 260px; }
+
+/* Cover */
+.sp-player__hero {
+    display: flex; justify-content: center;
+    margin-bottom: 2px;
+}
+.sp-player__cover {
+    width: 100%;
+    max-width: 220px;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 8px;
+    box-shadow: 0 16px 36px -12px rgba(0,0,0,0.5), 0 6px 18px rgba(0,0,0,0.25);
+}
+.sp-player__cover--empty {
+    display: grid; place-items: center;
+    background: var(--bg-sunken);
+    color: var(--fg-subtle);
+    border: 1px solid var(--border);
+}
+
+/* Meta */
+.sp-player__meta {
+    display: flex; flex-direction: column; gap: 2px;
+    text-align: center;
+    padding: 0 4px;
+}
+.sp-player__title {
+    font-size: 13px; font-weight: 600;
+    color: var(--fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sp-player__artists {
+    font-size: 11px; color: var(--fg-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Seek */
+.sp-player__seek {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+}
+.sp-player__time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    min-width: 30px;
+}
+.sp-player__time:last-child { text-align: right; }
+
+.sp-player__seek-input,
+.sp-player__vol-input {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 4px;
+    background: linear-gradient(
+        to right,
+        var(--sp-green) 0%,
+        var(--sp-green) var(--progress, 0%),
+        var(--border-strong) var(--progress, 0%),
+        var(--border-strong) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    transition: height 0.12s;
+}
+.sp-player__seek-input { width: 100%; }
+.sp-player__seek-input:hover,
+.sp-player__vol-input:hover { height: 5px; }
+
+.sp-player__seek-input::-webkit-slider-thumb,
+.sp-player__vol-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--fg);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+.sp-player__seek-input:hover::-webkit-slider-thumb,
+.sp-player__vol-input:hover::-webkit-slider-thumb { opacity: 1; }
+
+.sp-player__seek-input::-moz-range-thumb,
+.sp-player__vol-input::-moz-range-thumb {
+    width: 12px; height: 12px;
+    border: none;
+    border-radius: 50%;
+    background: var(--fg);
+    cursor: pointer;
+}
+.sp-player__seek-input:disabled,
+.sp-player__vol-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Controls */
+.sp-player__controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+.sp-player__ctl {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, transform 0.1s;
+}
+.sp-player__ctl:hover:not(:disabled) {
+    color: var(--fg);
+    background: var(--panel-hover);
+}
+.sp-player__ctl:active:not(:disabled) { transform: scale(0.94); }
+.sp-player__ctl:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.sp-player__ctl--main {
+    width: 40px; height: 40px;
+    background: var(--fg);
+    color: var(--bg);
+    margin: 0 4px;
+}
+.sp-player__ctl--main:hover:not(:disabled) {
+    background: var(--fg);
+    color: var(--bg);
+    transform: scale(1.06);
+}
+
+.sp-player__ctl--active {
+    color: var(--sp-green);
+    position: relative;
+}
+.sp-player__ctl--active::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--sp-green);
+}
+
+/* Volume */
+.sp-player__volume {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px;
+}
+.sp-player__vol-btn {
+    width: 24px; height: 24px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+.sp-player__vol-btn:hover { color: var(--fg); background: var(--panel-hover); }
+.sp-player__vol-input { flex: 1; }
+
+.sp-player__msg {
+    font-size: 10px;
+    color: var(--danger);
+    text-align: center;
+    padding: 4px;
+    background: var(--danger-soft);
+    border-radius: var(--radius-sm);
+    margin-top: 4px;
+}
+
+/* =========================================================
    MOBILE OVERLAY SIDEBAR
    ========================================================= */
 
@@ -3090,7 +3449,7 @@ ul { list-style: none; margin: 0; padding: 0; }
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
-    z-index: 89;
+    z-index: 100;
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
     animation: fade-in 0.2s ease;
@@ -3131,7 +3490,8 @@ ul { list-style: none; margin: 0; padding: 0; }
         left: 0;
         top: 0;
         height: 100vh;
-        z-index: 90;
+        height: 100dvh;
+        z-index: 110;
         transform: translateX(-100%);
         transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.22s ease;
         box-shadow: none;
@@ -3143,11 +3503,7 @@ ul { list-style: none; margin: 0; padding: 0; }
         box-shadow: var(--shadow-lg);
     }
 
-    .dash-layout--has-right .dash-layout__body {
-        grid-template-columns: 1fr;
-    }
-
-    .right-sidebar { display: none; }
+    /* body ahora flex; el right-sidebar móvil es drawer overlay */
 
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -3180,4 +3536,1852 @@ ul { list-style: none; margin: 0; padding: 0; }
     .kanban-board {
         grid-template-columns: 1fr;
     }
+}
+
+/* =========================================================
+   FLOATING AI CHAT  ·  morphs from oval pill to card
+   ========================================================= */
+
+.fchat-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0);
+    backdrop-filter: blur(0px);
+    pointer-events: none;
+    z-index: 998;
+    transition: background 0.25s ease, backdrop-filter 0.25s ease;
+}
+.fchat-backdrop--on {
+    background: rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    pointer-events: auto;
+}
+:root.dark .fchat-backdrop--on { background: rgba(0,0,0,0.55); }
+
+.fchat {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 999;
+    transition: right 0.3s ease, bottom 0.3s ease;
+}
+
+@media (max-width: 768px) {
+    .fchat { right: 14px; bottom: 14px; }
+}
+
+/* ── Orb (closed state) ─────────────────────────────────────── */
+.fchat__orb {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    isolation: isolate;
+    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.fchat__orb:hover { transform: translateY(-3px) scale(1.06); }
+.fchat__orb:active { transform: translateY(-1px) scale(0.96); }
+
+/* Halos exteriores en pulso */
+.fchat__orb-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    animation: orb-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.fchat__orb-ring--2 { animation-delay: 1.3s; }
+@keyframes orb-pulse {
+    0%   { transform: scale(1);    opacity: 0.55; }
+    80%  { transform: scale(1.55); opacity: 0;    }
+    100% { transform: scale(1.55); opacity: 0;    }
+}
+
+/* Núcleo del orbe — wrapper que recorta los blobs */
+.fchat__orb-core {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 55%, #064e3b 0%, #021712 100%);
+    box-shadow:
+        0 16px 40px -10px rgba(16, 185, 129, 0.65),
+        0 6px 18px rgba(0, 0, 0, 0.4),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* Conic gradient rotando lento → "respiración" del orbe */
+.fchat__orb-conic {
+    position: absolute;
+    inset: -25%;
+    background: conic-gradient(
+        from 0deg,
+        rgba(16, 185, 129, 0.7),
+        rgba(59, 130, 246, 0.55),
+        rgba(139, 92, 246, 0.6),
+        rgba(16, 185, 129, 0.85),
+        rgba(16, 185, 129, 0.7)
+    );
+    filter: blur(14px);
+    animation: orb-rotate 6s linear infinite;
+    opacity: 0.85;
+}
+@keyframes orb-rotate {
+    to { transform: rotate(360deg); }
+}
+
+/* Blobs de color que flotan dentro */
+.fchat__orb-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(10px);
+    mix-blend-mode: screen;
+}
+.fchat__orb-blob--a {
+    width: 50%; height: 50%;
+    top: 8%; left: 10%;
+    background: rgba(52, 211, 153, 0.95);
+    animation: orb-blob-a 5s ease-in-out infinite;
+}
+.fchat__orb-blob--b {
+    width: 45%; height: 45%;
+    bottom: 10%; right: 12%;
+    background: rgba(96, 165, 250, 0.7);
+    animation: orb-blob-b 7s ease-in-out infinite;
+}
+.fchat__orb-blob--c {
+    width: 40%; height: 40%;
+    top: 35%; right: 30%;
+    background: rgba(167, 139, 250, 0.55);
+    animation: orb-blob-c 9s ease-in-out infinite;
+}
+@keyframes orb-blob-a {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(20%, 30%) scale(1.1); }
+}
+@keyframes orb-blob-b {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(-25%, -20%) scale(1.15); }
+}
+@keyframes orb-blob-c {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(10%, -25%) scale(0.85); }
+}
+
+/* Highlight en la parte superior, simulando un material brillante */
+.fchat__orb-shine {
+    position: absolute;
+    top: 6%; left: 18%;
+    width: 60%; height: 35%;
+    background: radial-gradient(ellipse at center, rgba(255,255,255,0.55) 0%, transparent 70%);
+    border-radius: 50%;
+    filter: blur(2px);
+    pointer-events: none;
+}
+
+/* Ícono centrado */
+.fchat__orb-icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: #fff;
+    filter: drop-shadow(0 1px 4px rgba(0,0,0,0.45));
+    z-index: 2;
+}
+
+/* Tooltip que aparece al hover, a la izquierda */
+.fchat__orb-tooltip {
+    position: absolute;
+    right: calc(100% + 14px);
+    top: 50%;
+    transform: translateY(-50%) translateX(8px);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: 0 8px 20px -6px rgba(0,0,0,0.3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1;
+}
+.fchat__orb-tooltip svg { color: var(--acc); }
+.fchat__orb-tooltip kbd {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 2px 6px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg-muted);
+}
+.fchat__orb:hover .fchat__orb-tooltip {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+}
+
+/* Badge de mensajes no leídos */
+.fchat__orb-badge {
+    position: absolute;
+    top: -2px; right: -2px;
+    min-width: 20px; height: 20px;
+    padding: 0 6px;
+    display: grid; place-items: center;
+    background: var(--danger);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 999px;
+    border: 3px solid var(--bg);
+    box-shadow: 0 2px 8px rgba(225, 29, 72, 0.5);
+    animation: orb-pop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 3;
+}
+@keyframes orb-pop { from { transform: scale(0); } to { transform: scale(1); } }
+
+/* En móvil: orbe un poco más chico y sin tooltip */
+@media (max-width: 540px) {
+    .fchat__orb { width: 58px; height: 58px; }
+    .fchat__orb-tooltip { display: none; }
+}
+
+/* En tema claro el orbe se mantiene oscuro (es su estilo) */
+:root.light .fchat__orb-tooltip { background: var(--panel); border-color: var(--border-strong); }
+
+/* Respeta usuarios con prefer-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+    .fchat__orb-ring,
+    .fchat__orb-conic,
+    .fchat__orb-blob,
+    .rs-tabs__indicator { animation: none !important; transition: none !important; }
+}
+
+/* ── Card (open) ── */
+.fchat__card {
+    width: min(420px, calc(100vw - 32px));
+    height: min(620px, calc(100vh - 80px));
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow:
+        0 24px 60px -12px rgba(0,0,0,0.35),
+        0 8px 24px rgba(0,0,0,0.18),
+        0 0 0 1px var(--border-strong);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform-origin: bottom right;
+    animation: fchat-grow 0.32s cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+@keyframes fchat-grow {
+    from { opacity: 0; transform: scale(0.4) translate(40%, 40%); border-radius: 50%; }
+    50%  { opacity: 1; }
+    to   { opacity: 1; transform: scale(1) translate(0, 0); border-radius: 22px; }
+}
+
+.fchat__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--panel) 100%);
+    flex-shrink: 0;
+}
+.fchat__head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fchat__avatar {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+    color: var(--acc-fg);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    box-shadow: 0 4px 12px -2px rgba(16, 185, 129, 0.45);
+    flex-shrink: 0;
+}
+.fchat__head-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fchat__head-title {
+    font-size: 13px; font-weight: 600; color: var(--fg);
+    line-height: 1.2;
+}
+.fchat__head-sub {
+    display: flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 10px; color: var(--fg-subtle);
+}
+.fchat__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 6px var(--ok);
+    animation: fchat-pulse 2s ease-in-out infinite;
+}
+@keyframes fchat-pulse { 50% { opacity: 0.4; } }
+
+.fchat__head-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.fchat__icon-btn {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.fchat__icon-btn:hover {
+    background: var(--panel-hover);
+    color: var(--fg);
+    border-color: var(--border);
+}
+
+.fchat__body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    background:
+        radial-gradient(1200px circle at 20% -10%, var(--acc-soft) 0%, transparent 50%),
+        var(--panel);
+}
+
+.fchat__empty {
+    margin: auto;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+}
+.fchat__empty-icon {
+    width: 52px; height: 52px;
+    display: grid; place-items: center;
+    background: var(--acc-soft);
+    color: var(--acc);
+    border-radius: 50%;
+    margin-bottom: 4px;
+}
+.fchat__empty-title {
+    margin: 0;
+    font-size: 16px; font-weight: 600;
+    color: var(--fg);
+}
+.fchat__empty-sub {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+    max-width: 280px;
+    line-height: 1.5;
+}
+.fchat__suggestions {
+    display: flex; flex-direction: column; gap: 6px;
+    margin-top: 12px;
+    width: 100%;
+    max-width: 320px;
+}
+.fchat__suggestion {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
+    font-family: var(--font-sans);
+}
+.fchat__suggestion:hover:not(:disabled) {
+    border-color: var(--acc);
+    color: var(--acc);
+    background: var(--acc-soft);
+    transform: translateX(2px);
+}
+.fchat__suggestion:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fchat__msg {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    animation: fchat-msg-in 0.25s ease;
+}
+@keyframes fchat-msg-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.fchat__msg--user { justify-content: flex-end; }
+.fchat__msg--assistant { justify-content: flex-start; }
+
+.fchat__msg-avatar {
+    width: 22px; height: 22px;
+    background: var(--acc-soft);
+    color: var(--acc);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+}
+
+.fchat__bubble {
+    max-width: 78%;
+    padding: 9px 13px;
+    border-radius: 16px;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.fchat__msg--user .fchat__bubble {
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+    color: var(--acc-fg);
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 4px 12px -4px rgba(16,185,129,0.4);
+}
+.fchat__msg--assistant .fchat__bubble {
+    background: var(--bg-elev);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+}
+
+.fchat__typing {
+    display: flex; align-items: center; gap: 4px;
+    padding: 14px 16px;
+}
+.fchat__typing span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--fg-subtle);
+    animation: fchat-bounce 1.2s infinite;
+}
+.fchat__typing span:nth-child(2) { animation-delay: 0.2s; }
+.fchat__typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes fchat-bounce {
+    0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+    40%           { transform: scale(1.1); opacity: 1; }
+}
+
+.fchat__error {
+    background: var(--danger-soft);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+.fchat__form {
+    display: flex;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-elev);
+    flex-shrink: 0;
+}
+.fchat__input {
+    flex: 1;
+    height: 38px;
+    padding: 0 14px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    color: var(--fg);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.fchat__input:focus {
+    border-color: var(--acc);
+    box-shadow: 0 0 0 3px var(--acc-soft);
+}
+.fchat__send {
+    width: 38px; height: 38px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+    border: none;
+    border-radius: 50%;
+    color: var(--acc-fg);
+    cursor: pointer;
+    transition: transform 0.12s, opacity 0.15s;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px -2px rgba(16,185,129,0.45);
+}
+.fchat__send:hover:not(:disabled) { transform: scale(1.06); }
+.fchat__send:active:not(:disabled) { transform: scale(0.95); }
+.fchat__send:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+
+.fchat__spin { animation: nota-spin 0.8s linear infinite; }
+
+/* =========================================================
+   POMODORO WIDGET
+   ========================================================= */
+
+.pomo {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: sticky;
+    top: 0;
+    --pomo-color: var(--acc);
+}
+.pomo--focus { --pomo-color: var(--acc); }
+.pomo--short { --pomo-color: #3b82f6; }
+.pomo--long  { --pomo-color: #8b5cf6; }
+
+.pomo--running { box-shadow: 0 0 0 1px var(--pomo-color), 0 14px 40px -16px var(--pomo-color); }
+
+.pomo__tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    align-items: center;
+}
+.pomo__tab {
+    flex: 1;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    color: var(--fg-muted);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.pomo__tab:hover:not(:disabled) { color: var(--fg); }
+.pomo__tab--active {
+    background: var(--panel);
+    color: var(--pomo-color);
+    box-shadow: var(--shadow-sm);
+}
+.pomo__tab:disabled { cursor: not-allowed; }
+.pomo__cfg {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--fg-subtle);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.pomo__cfg:hover { background: var(--panel-hover); color: var(--fg); }
+
+.pomo__settings {
+    display: flex; flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+.pomo__cfg-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.pomo__cfg-row--checks {
+    display: flex;
+    gap: 12px;
+    grid-template-columns: none;
+}
+.pomo__cfg-row label {
+    display: flex; flex-direction: column;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.pomo__cfg-row input[type="number"] {
+    height: 30px;
+    padding: 0 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.pomo__cfg-row input[type="number"]:focus { border-color: var(--pomo-color); }
+
+.pomo__check {
+    display: flex; align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+.pomo__check input[type="checkbox"] { accent-color: var(--pomo-color); cursor: pointer; }
+
+.pomo__ring-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    max-width: 220px;
+    margin: 4px auto;
+}
+.pomo__ring {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+}
+.pomo__ring-bg {
+    fill: none;
+    stroke: var(--bg-sunken);
+    stroke-width: 6;
+}
+.pomo__ring-fg {
+    fill: none;
+    stroke: var(--pomo-color);
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
+    filter: drop-shadow(0 0 6px var(--pomo-color));
+}
+.pomo__center {
+    position: absolute;
+    inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 4px;
+}
+.pomo__center-icon { color: var(--pomo-color); opacity: 0.7; }
+.pomo__time {
+    font-family: var(--font-mono);
+    font-size: 38px;
+    font-weight: 700;
+    color: var(--fg);
+    letter-spacing: -0.02em;
+    line-height: 1;
+}
+.pomo__phase {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.pomo__tarea {
+    display: flex; flex-direction: column;
+    gap: 4px;
+}
+.pomo__tarea-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.pomo__tarea-select {
+    height: 34px;
+    padding: 0 10px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--fg);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.pomo__tarea-select:focus { border-color: var(--pomo-color); }
+.pomo__tarea-select:disabled { opacity: 0.6; cursor: not-allowed; }
+.pomo__tarea-hint {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    margin-top: -2px;
+}
+
+.pomo__controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.pomo__btn {
+    height: 40px;
+    min-width: 40px;
+    padding: 0 12px;
+    display: flex; align-items: center; justify-content: center;
+    gap: 6px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+}
+.pomo__btn:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--border-strong); }
+.pomo__btn:active { transform: scale(0.97); }
+.pomo__btn--primary {
+    flex: 1;
+    background: var(--pomo-color);
+    color: var(--acc-fg);
+    border-color: var(--pomo-color);
+    box-shadow: 0 4px 14px -4px var(--pomo-color);
+}
+.pomo__btn--primary:hover { color: var(--acc-fg); filter: brightness(1.05); }
+
+.pomo__sessions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.pomo__sessions-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.pomo__sessions-dots { display: flex; gap: 5px; }
+.pomo__dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    transition: background 0.2s, border-color 0.2s;
+}
+.pomo__dot--on {
+    background: var(--pomo-color);
+    border-color: var(--pomo-color);
+    box-shadow: 0 0 6px var(--pomo-color);
+}
+.pomo__sessions-count {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--fg);
+}
+
+/* =========================================================
+   POMODORO STATS (right sidebar tab)
+   ========================================================= */
+.pomo-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.pomo-stat {
+    display: flex; flex-direction: column;
+    gap: 2px;
+    padding: 12px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+.pomo-stat__label {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.pomo-stat__value {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+    margin-top: 2px;
+}
+.pomo-stat__hint {
+    font-size: 10px;
+    color: var(--fg-subtle);
+}
+.pomo-tarea-list {
+    display: flex; flex-direction: column;
+    gap: 4px;
+}
+.pomo-tarea-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+}
+.pomo-tarea-row__name {
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+.pomo-tarea-row__time {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--acc);
+    flex-shrink: 0;
+}
+
+/* =========================================================
+   KANBAN ENHANCEMENTS  (stats, toolbar, layout, card pomo btn)
+   ========================================================= */
+
+.kanban-stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+}
+@media (max-width: 1100px) { .kanban-stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 600px)  { .kanban-stats { grid-template-columns: repeat(2, 1fr); } }
+
+.kanban-stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    display: flex; flex-direction: column;
+    gap: 2px;
+    border-left: 3px solid var(--border);
+    transition: border-color 0.15s, transform 0.1s;
+}
+.kanban-stat:hover { transform: translateY(-1px); }
+.kanban-stat__label {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex; align-items: center; gap: 4px;
+}
+.kanban-stat__value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+}
+.kanban-stat--pendiente  { border-left-color: var(--fg-subtle); }
+.kanban-stat--progreso   { border-left-color: var(--warn); }
+.kanban-stat--completado { border-left-color: var(--acc); }
+.kanban-stat--alta       { border-left-color: var(--danger); }
+.kanban-stat--alta .kanban-stat__value { color: var(--danger); }
+.kanban-stat--foco       { border-left-color: #8b5cf6; }
+.kanban-stat--foco .kanban-stat__value { color: #8b5cf6; }
+
+.kanban-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.kanban-search {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    height: 36px;
+    transition: border-color 0.15s;
+}
+.kanban-search:focus-within { border-color: var(--acc); }
+.kanban-search svg { color: var(--fg-subtle); flex-shrink: 0; }
+.kanban-search input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+}
+.kanban-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px 0 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    height: 36px;
+}
+.kanban-filter svg { color: var(--fg-subtle); flex-shrink: 0; }
+.kanban-filter select {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    cursor: pointer;
+    padding-right: 4px;
+}
+
+.kanban-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    align-items: start;
+}
+.kanban-layout--with-pomo {
+    grid-template-columns: 280px 1fr;
+}
+@media (max-width: 1100px) {
+    .kanban-layout--with-pomo {
+        grid-template-columns: 1fr;
+    }
+}
+.kanban-pomo-wrap {
+    position: sticky;
+    top: 16px;
+}
+
+/* card refinements */
+.kanban-card {
+    position: relative;
+    border-left-width: 3px;
+}
+.kanban-card--alta  { border-left-color: var(--danger); }
+.kanban-card--media { border-left-color: var(--warn);   }
+.kanban-card--baja  { border-left-color: var(--acc);    }
+
+.kanban-card__pomo {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    background: rgba(139, 92, 246, 0.1);
+    color: #8b5cf6;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.kanban-card__focus-btn {
+    position: absolute;
+    top: 8px;
+    right: 28px;
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    color: var(--fg-subtle);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s, border-color 0.15s;
+}
+.kanban-card:hover .kanban-card__focus-btn {
+    opacity: 1;
+}
+.kanban-card__focus-btn:hover {
+    background: rgba(139, 92, 246, 0.15);
+    color: #8b5cf6;
+    border-color: rgba(139, 92, 246, 0.4);
+}
+
+/* =========================================================
+   INSTALL BUTTON (PWA)
+   ========================================================= */
+
+.install-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+    color: var(--acc-fg);
+    border: none;
+    border-radius: 999px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.12s, box-shadow 0.15s;
+    box-shadow: 0 4px 12px -4px rgba(16,185,129,0.55);
+    flex-shrink: 0;
+}
+.install-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -4px rgba(16,185,129,0.6); }
+.install-btn:active { transform: translateY(0); }
+.install-btn--compact {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+}
+
+/* iOS install instructions modal */
+.ios-install-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: grid;
+    place-items: center;
+    z-index: 1100;
+    padding: 16px;
+    animation: fade-in 0.2s ease;
+}
+.ios-install-modal__card {
+    position: relative;
+    width: min(380px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px 22px 18px;
+    box-shadow: 0 30px 70px -20px rgba(0,0,0,0.5);
+    text-align: center;
+    animation: fchat-grow 0.28s cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+.ios-install-modal__close {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--fg-muted);
+    cursor: pointer;
+}
+.ios-install-modal__close:hover { background: var(--panel-hover); color: var(--fg); }
+.ios-install-modal__icon {
+    width: 64px; height: 64px;
+    margin: 0 auto 12px;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px -8px rgba(16,185,129,0.45);
+}
+.ios-install-modal__icon img { width: 100%; height: 100%; display: block; }
+.ios-install-modal__card h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    color: var(--fg);
+}
+.ios-install-modal__card p {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: var(--fg-muted);
+    line-height: 1.5;
+}
+.ios-install-modal__card ol {
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 0;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ios-install-modal__card ol li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--fg-muted);
+    line-height: 1.5;
+}
+.ios-install-modal__card ol li strong { color: var(--fg); }
+.ios-install-modal__step-icon {
+    width: 26px; height: 26px;
+    display: grid; place-items: center;
+    background: var(--acc-soft);
+    color: var(--acc);
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+.ios-install-modal__cta {
+    width: 100%;
+    height: 38px;
+    background: var(--acc);
+    color: var(--acc-fg);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.ios-install-modal__cta:hover { background: var(--acc-hover); }
+
+/* =========================================================
+   COMPREHENSIVE MOBILE RESPONSIVE PASS
+   ========================================================= */
+
+/* =========================================================
+   TOPBAR MÓVIL  ·  rediseño uniforme y elegante
+   Todos los botones a 38×38 con el mismo radius e idéntico look
+   ========================================================= */
+@media (max-width: 768px) {
+    .topbar {
+        /* La altura "útil" sigue siendo 56px, pero crecemos con el safe-area-top */
+        height: calc(56px + var(--safe-top, 0px));
+        padding: var(--safe-top, 0px)
+                 max(10px, var(--safe-right))
+                 0
+                 max(10px, var(--safe-left));
+        gap: 6px;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--border);
+    }
+    .topbar__left,
+    .topbar__right {
+        gap: 6px;
+        align-items: center;
+    }
+    .topbar__left { flex: 1; min-width: 0; }
+
+    /* Ocultos en móvil */
+    .topbar__cmd-btn,
+    .topbar__breadcrumb-label,
+    .topbar__breadcrumb-sep,
+    .topbar__divider {
+        display: none;
+    }
+
+    /* Tamaño y radius uniforme para TODOS los botones del topbar.
+       align-self: center asegura que se centren verticalmente en la barra. */
+    .topbar__hamburger,
+    .topbar__panel-toggle,
+    .topbar .theme-toggle,
+    .topbar .install-btn,
+    .topbar .user-menu__trigger {
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px;
+        padding: 0 !important;
+        border-radius: 11px !important;
+        flex-shrink: 0;
+        display: grid !important;
+        place-items: center;
+        gap: 0 !important;
+        align-self: center;
+        margin: 0 !important;
+        line-height: 1 !important;
+    }
+
+    /* En móvil quitamos el aura/glow exterior que sangra debajo del topbar */
+    .topbar__panel-toggle::before { display: none !important; }
+    .topbar__panel-toggle.is-open {
+        box-shadow: none !important;
+    }
+    .topbar__panel-toggle:hover {
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    /* El dot pulsante lo dejamos pero más contenido */
+    .topbar__panel-toggle.is-collapsed::after {
+        top: -1px;
+        right: -1px;
+        width: 8px; height: 8px;
+        border-width: 2px;
+    }
+    .topbar__panel-toggle--right.is-collapsed::after {
+        left: -1px;
+        right: auto;
+    }
+
+    /* Theme toggle: en móvil un solo icono cuadrado, no pill con dos */
+    .topbar .theme-toggle {
+        background: var(--bg-sunken);
+        border: 1px solid var(--border);
+    }
+    .topbar .theme-toggle__icon {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: transparent !important;
+        box-shadow: none !important;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+    .topbar .theme-toggle__icon[data-active="true"] {
+        opacity: 1;
+        color: var(--fg);
+    }
+
+    /* User menu: solo el avatar, ocultar info + chevron */
+    .topbar .user-menu__trigger {
+        background: transparent;
+        border: 1px solid var(--border);
+        overflow: hidden;
+    }
+    .topbar .user-menu__info,
+    .topbar .user-menu__caret { display: none !important; }
+    .topbar .user-menu__avatar {
+        width: 28px !important;
+        height: 28px !important;
+    }
+
+    /* Install: solo icono */
+    .topbar .install-btn span { display: none; }
+    .topbar .install-btn {
+        background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+        color: var(--acc-fg);
+        border: none;
+    }
+
+    /* Page title (era breadcrumb) */
+    .topbar__breadcrumb {
+        flex: 1;
+        min-width: 0;
+        font-size: 15px;
+        font-weight: 600;
+        font-family: var(--font-sans);
+        padding: 0 6px;
+    }
+    .topbar__breadcrumb-current {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--fg);
+        font-family: var(--font-sans);
+        letter-spacing: -0.01em;
+    }
+
+    /* User dropdown abre alineado a la derecha (pegado al borde) */
+    .topbar .user-menu__dropdown {
+        right: 0 !important;
+        left: auto !important;
+        min-width: 240px;
+    }
+}
+
+/* iPhone SE / pantallas muy estrechas — esconder install + acomodar todo */
+@media (max-width: 380px) {
+    .topbar .install-btn { display: none !important; }
+    .topbar { padding: 0 8px; gap: 4px; }
+    .topbar__left, .topbar__right { gap: 4px; }
+    .topbar__hamburger,
+    .topbar__panel-toggle,
+    .topbar .theme-toggle,
+    .topbar .user-menu__trigger {
+        width: 36px !important;
+        height: 36px !important;
+    }
+}
+
+/* =========================================================
+   BOTONES X DE CIERRE EN DRAWERS (solo móvil)
+   ========================================================= */
+
+/* Sidebar izquierdo — botón X dentro del header */
+.sidebar__mobile-close {
+    display: none;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.sidebar__mobile-close:hover {
+    background: var(--panel-hover);
+    color: var(--fg);
+    border-color: var(--border-strong);
+}
+@media (max-width: 768px) {
+    .sidebar__mobile-close { display: grid; }
+    .sidebar__header { display: flex; align-items: center; gap: 8px; }
+}
+
+/* Right drawer — botón X flotante en la esquina superior derecha (móvil) */
+.rs-mobile-close {
+    display: none;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    z-index: 10;
+}
+.rs-mobile-close:hover {
+    background: var(--panel-hover);
+    color: var(--fg);
+    border-color: var(--border-strong);
+}
+@media (max-width: 768px) {
+    .rs-mobile-close { display: grid; }
+    /* Reservamos espacio en la cabecera para que el X no tape los tabs.
+       El indicator usa --rs-pad-r así que se queda alineado. */
+    .rs-panel-root .rs-tabs {
+        --rs-pad-r: 56px;
+    }
+}
+
+/* Página y cabecera */
+@media (max-width: 640px) {
+    .dash-layout__content {
+        padding: 12px max(12px, var(--safe-left)) calc(80px + var(--safe-bottom)) max(12px, var(--safe-right));
+    }
+    .page__header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .page__header > div:last-child {
+        display: flex;
+        gap: 8px;
+    }
+    .page__header > div:last-child > .btn {
+        flex: 1;
+    }
+    .page__title { font-size: 18px; }
+    .page__kicker { font-size: 10px; }
+    .page__subtitle { font-size: 11px; }
+}
+
+/* Modales: ocupar más pantalla en móvil + scroll interno */
+@media (max-width: 520px) {
+    .modal-card,
+    .modal {
+        width: calc(100vw - 16px) !important;
+        max-width: calc(100vw - 16px) !important;
+        max-height: calc(100vh - 32px) !important;
+        margin: 8px !important;
+    }
+    .field-row { grid-template-columns: 1fr !important; gap: 12px !important; }
+}
+
+/* Kanban: cards full-width + Pomodoro panel arriba (no sidebar) */
+@media (max-width: 1100px) {
+    .kanban-layout--with-pomo {
+        grid-template-columns: 1fr;
+    }
+    .kanban-pomo-wrap {
+        position: static;
+    }
+    .pomo {
+        max-width: 320px;
+        margin: 0 auto;
+    }
+}
+
+@media (max-width: 640px) {
+    .kanban-stats {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
+    }
+    .kanban-stat {
+        padding: 8px 10px;
+    }
+    .kanban-stat__value { font-size: 18px; }
+    .kanban-toolbar {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .kanban-toolbar > * {
+        min-width: calc(50% - 3px);
+        flex: 1 1 calc(50% - 3px);
+    }
+    .kanban-search {
+        flex-basis: 100%;
+        order: -1;
+    }
+    .kanban-card {
+        padding: 14px 12px;
+    }
+    .kanban-card__titulo { font-size: 14px; }
+    .kanban-card__focus-btn {
+        opacity: 1;            /* siempre visible en touch */
+    }
+}
+
+/* Floating chat: tamaño y posición móvil */
+@media (max-width: 640px) {
+    .fchat__card {
+        width: calc(100vw - 16px);
+        height: calc(100vh - 100px);
+        max-height: calc(100vh - 100px);
+        border-radius: 18px;
+    }
+    .fchat {
+        right: max(12px, var(--safe-right));
+        bottom: calc(12px + var(--safe-bottom));
+    }
+    .fchat__pill {
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+}
+
+/* Right sidebar - cuando está visible en móvil hacerla overlay (futuro), por ahora se oculta */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .right-sidebar {
+        width: 280px;
+    }
+    :root { --right-sidebar-w: 280px; }
+}
+
+/* Spotify player: hacer cover más chico en horizontal estrecho */
+@media (max-width: 380px) {
+    .sp-player__cover { max-width: 180px; }
+    .sp-player__title { font-size: 12px; }
+    .sp-player__artists { font-size: 10px; }
+}
+
+/* Pomodoro widget: más compacto en móvil */
+@media (max-width: 480px) {
+    .pomo {
+        padding: 14px;
+        gap: 10px;
+    }
+    .pomo__ring-wrap { max-width: 180px; }
+    .pomo__time { font-size: 32px; }
+    .pomo__btn { height: 38px; font-size: 12px; }
+}
+
+/* Tablas responsivas: scroll horizontal en pantallas chicas */
+@media (max-width: 640px) {
+    .data-table {
+        font-size: 12px;
+    }
+    .data-table th, .data-table td {
+        padding: 8px 10px !important;
+    }
+}
+
+/* Login y formularios de auth ocupan más pantalla */
+@media (max-width: 540px) {
+    .auth-card {
+        width: calc(100vw - 24px) !important;
+        padding: 24px 20px !important;
+    }
+    .auth-layout {
+        padding: 12px;
+    }
+}
+
+/* Botones: mejor área de toque (≥44px) en móvil */
+@media (max-width: 768px) {
+    .btn,
+    .rs-btn {
+        min-height: 40px;
+    }
+    .kanban-col__add {
+        min-height: 44px;
+        font-size: 13px;
+    }
+}
+
+/* Floating chat: en standalone (instalada) más alto el botón pill para no chocar con la barra de tareas iOS */
+@media (display-mode: standalone) and (max-width: 640px) {
+    .fchat {
+        bottom: calc(20px + var(--safe-bottom));
+    }
+}
+
+/* Sidebar móvil: ancho cómodo */
+@media (max-width: 480px) {
+    .sidebar {
+        width: 88vw !important;
+        max-width: 320px;
+    }
+}
+
+/* (El topbar ya absorbe el safe-area-top siempre, no necesita override aquí) */
+
+/* =========================================================
+   TOPBAR PANEL TOGGLES  (botones colapsar sidebars)  ·  v2
+   Diseño llamativo con gradiente, glow y pulse animado
+   ========================================================= */
+
+.topbar__panel-toggle {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: all 0.22s cubic-bezier(0.34, 1.36, 0.64, 1);
+    flex-shrink: 0;
+    overflow: visible;
+    isolation: isolate;
+}
+
+/* Aura externa — glow ring detrás (siempre presente, suave) */
+.topbar__panel-toggle::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, var(--acc) 0%, #3b82f6 100%);
+    z-index: -1;
+    opacity: 0;
+    filter: blur(8px);
+    transition: opacity 0.22s ease;
+}
+.topbar__panel-toggle:hover::before { opacity: 0.65; }
+.topbar__panel-toggle.is-open::before { opacity: 0.55; }
+
+.topbar__panel-toggle svg {
+    transition: transform 0.32s cubic-bezier(0.34, 1.36, 0.64, 1);
+    z-index: 1;
+}
+
+.topbar__panel-toggle:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--acc) 50%, var(--border));
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px -4px color-mix(in srgb, var(--acc) 35%, transparent);
+}
+.topbar__panel-toggle:hover svg { transform: scale(1.15); }
+.topbar__panel-toggle:active { transform: translateY(0) scale(0.92); }
+
+/* ── Estado ABIERTO ── */
+/* Filled con gradiente — claramente "activo" */
+.topbar__panel-toggle.is-open {
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-hover) 100%);
+    border-color: var(--acc);
+    color: var(--acc-fg);
+    box-shadow: 0 4px 14px -4px var(--acc),
+                inset 0 1px 0 rgba(255,255,255,0.18);
+}
+.topbar__panel-toggle.is-open:hover {
+    color: var(--acc-fg);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 22px -4px var(--acc),
+                inset 0 1px 0 rgba(255,255,255,0.22);
+}
+
+/* ── Estado COLAPSADO ── */
+/* Outline + dot pulsante grande que dice "hay algo aquí, ábreme" */
+.topbar__panel-toggle.is-collapsed {
+    background: var(--bg-elev);
+    border-color: var(--border);
+    color: var(--fg-muted);
+}
+.topbar__panel-toggle.is-collapsed:hover {
+    color: var(--acc);
+    border-color: var(--acc);
+}
+
+/* Dot indicador con doble ring pulsante */
+.topbar__panel-toggle.is-collapsed::after {
+    content: '';
+    position: absolute;
+    top: -2px; right: -2px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--acc);
+    border: 2px solid var(--bg-elev);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--acc) 70%, transparent);
+    animation: panel-toggle-pulse 1.6s ease-out infinite;
+    z-index: 2;
+}
+@keyframes panel-toggle-pulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--acc) 70%, transparent); }
+    70%  { box-shadow: 0 0 0 10px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Cuando el sidebar derecho está colapsado, el dot va a la izquierda
+   (lado donde el sidebar volvería a aparecer) — pequeño detalle de UX */
+.topbar__panel-toggle--right.is-collapsed::after {
+    left: -2px;
+    right: auto;
+}
+
+/* Móvil: izquierdo oculto (hay hamburguesa), derecho más grande */
+@media (max-width: 768px) {
+    .topbar__panel-toggle--left { display: none !important; }
+    .topbar__panel-toggle {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+    }
+}
+
+/* =========================================================
+   RIGHT SIDEBAR — colapso desktop / drawer móvil
+   ========================================================= */
+
+.right-sidebar {
+    transition: flex-basis 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.24s ease,
+                border-color 0.24s ease,
+                transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Colapsado en desktop: el flex-basis a 0 → el contenido principal toma TODO el ancho */
+.dash-layout--right-collapsed.dash-layout--has-right .dash-layout__body > .right-sidebar {
+    flex: 0 0 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    border-left-color: transparent;
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+/* ── Drawer overlay (móvil) ── */
+@media (max-width: 768px) {
+    /* En móvil el body es flex; el sidebar derecho sale del flow al ser fixed */
+    .dash-layout--has-right .dash-layout__body > .right-sidebar {
+        flex: 0 0 0;       /* no toma espacio en el flow */
+    }
+
+    .right-sidebar {
+        position: fixed;
+        top: 0; right: 0;
+        width: min(360px, 92vw);
+        max-width: 92vw;
+        height: 100vh;
+        height: 100dvh;
+        z-index: 110;
+        transform: translateX(100%);
+        box-shadow: none;
+        border-left: 1px solid var(--border);
+        background: var(--bg-elev);
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .right-sidebar--mobile-open {
+        transform: translateX(0);
+        box-shadow: -16px 0 40px -16px rgba(0,0,0,0.45);
+    }
+
+    .right-sidebar--collapsed {
+        width: min(360px, 92vw) !important;
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* El backdrop ahora también lo activa el drawer derecho */
+    .dash-layout--right-drawer-open .sidebar-backdrop {
+        display: block;
+    }
+}
+
+/* =========================================================
+   PASADA RESPONSIVE / iOS  (refinada)
+   ========================================================= */
+
+/* iOS: nunca dejes que el body haga overscroll/bounce blanco */
+html, body { background: var(--bg); }
+
+/* Tap targets cómodos */
+@media (max-width: 768px) {
+    button, .btn, a.btn, [role="button"] { min-height: 40px; }
+    .topbar__hamburger { width: 40px; height: 40px; }
+    .topbar__panel-toggle { width: 40px; height: 40px; }
+    .install-btn { height: 36px; }
+}
+
+/* Login fullscreen en móvil — ya no tarjeta-en-card */
+@media (max-width: 540px) {
+    .auth-layout {
+        padding: max(20px, var(--safe-top)) 16px max(20px, var(--safe-bottom));
+        align-items: flex-start;
+    }
+    .auth-layout__content {
+        max-width: 100%;
+        margin-top: 8vh;
+    }
+    .login__card {
+        padding: 24px 20px !important;
+        border-radius: 14px !important;
+        background: var(--panel) !important;
+    }
+    .login__title { font-size: 22px !important; }
+    .login__brand { margin-bottom: 18px; }
+}
+
+/* Page header layout móvil */
+@media (max-width: 640px) {
+    .dash-layout__content {
+        padding: 14px max(14px, var(--safe-left))
+                 calc(20px + var(--safe-bottom))
+                 max(14px, var(--safe-right));
+    }
+    .page__header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+    .page__header > div:last-child {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .page__title { font-size: 22px; line-height: 1.15; }
+    .page__kicker { font-size: 11px; }
+    .page__subtitle { font-size: 12px; line-height: 1.5; }
+}
+
+/* Modales: bottom sheets en móvil */
+@media (max-width: 640px) {
+    .modal-overlay,
+    .modal-backdrop {
+        align-items: flex-end !important;
+        padding: 0 !important;
+    }
+    .modal,
+    .modal-card {
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 92vh !important;
+        max-height: 92dvh !important;
+        margin: 0 !important;
+        border-radius: 18px 18px 0 0 !important;
+        animation: sheet-slide-up 0.3s cubic-bezier(0.34, 1.36, 0.64, 1);
+        padding-bottom: max(16px, var(--safe-bottom)) !important;
+    }
+    @keyframes sheet-slide-up {
+        from { transform: translateY(100%); opacity: 0.7; }
+        to   { transform: translateY(0);    opacity: 1; }
+    }
+}
+
+/* Tablas con scroll horizontal en móvil */
+@media (max-width: 768px) {
+    .data-table-wrap,
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -14px;
+        padding: 0 14px;
+    }
+    .data-table {
+        min-width: 540px;
+    }
+}
+
+/* Stats grid del Dashboard: 1 col en muy pequeño */
+@media (max-width: 380px) {
+    .stats-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Right sidebar: panel head más compacto en móvil */
+@media (max-width: 640px) {
+    .rs-panel-head { padding: 10px 12px; }
+    .rs-panel-head__icon { width: 28px; height: 28px; }
+    .rs-tabs {
+        --rs-pad-y: 6px;
+        --rs-pad-l: 6px;
+        --rs-pad-r: 6px;
+    }
+    .rs-tab { height: 38px; }       /* tap target ≥ 38 */
+}
+
+/* Floating chat orb: respeta safe-area de iPhone */
+.fchat {
+    bottom: max(22px, calc(22px + var(--safe-bottom)));
+    right:  max(22px, calc(22px + var(--safe-right)));
+}
+@media (max-width: 768px) {
+    .fchat {
+        bottom: max(14px, calc(14px + var(--safe-bottom)));
+        right:  max(14px, calc(14px + var(--safe-right)));
+    }
+}
+
+/* iOS Safari: deshabilita el zoom doble-tap en botones */
+button { touch-action: manipulation; }
+
+/* Sidebar mobile: respeta safe-area-top para no chocar con notch */
+@media (max-width: 768px) {
+    .sidebar {
+        padding-top: max(0px, var(--safe-top));
+    }
+    .right-sidebar {
+        padding-top: max(0px, var(--safe-top));
+        padding-bottom: max(0px, var(--safe-bottom));
+    }
+}
+
+/* Prevenir scroll horizontal accidental en cualquier vista */
+body, .dash-layout, .dash-layout__main, .dash-layout__body {
+    max-width: 100vw;
+    max-width: 100dvw;
+}
+.dash-layout__content {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+/* Floating chat card: en móvil ocupa casi pantalla completa con safe-area */
+@media (max-width: 640px) {
+    .fchat__card {
+        width: calc(100vw - 16px);
+        max-height: calc(100dvh - 80px - var(--safe-bottom));
+        height: calc(100dvh - 80px - var(--safe-bottom));
+    }
+}
+
+/* iOS Safari: select y date pickers no se vean horribles */
+select, input[type="date"], input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
 }

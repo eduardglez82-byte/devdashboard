@@ -2,51 +2,43 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Foundation\Auth\User as Authenticatable;
+use App\Models\Concerns\HasMongoId;
+use Illuminate\Auth\Authenticatable;
+use Illuminate\Auth\Passwords\CanResetPassword;
+use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use Illuminate\Contracts\Auth\CanResetPassword as CanResetPasswordContract;
+use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens;
+use Jenssegers\Mongodb\Eloquent\Model;
 
-class User extends Authenticatable
+class User extends Model implements AuthenticatableContract, CanResetPasswordContract
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use Authenticatable, Authorizable, CanResetPassword, HasMongoId, Notifiable;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
+    protected $connection = 'mongodb';
+    protected $collection = 'users';
+
     protected $fillable = [
         'name',
         'email',
         'password',
         'role',
         'empresa_id',
+        'remember_token',
+        'email_verified_at',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
         'email_verified_at' => 'datetime',
-        'empresa_id'        => 'integer',
     ];
 
     public function empresa()
     {
-        return $this->belongsTo(\App\Models\Empresa::class);
+        return $this->belongsTo(Empresa::class, 'empresa_id', '_id');
     }
 }

@@ -5,8 +5,7 @@ import {
     LayoutTemplate,
     Users,
     Building2,
-    ChevronsLeft,
-    ChevronsRight,
+    X,
 } from 'lucide-react';
 import SidebarItem from './SidebarItem';
 import Logo from '../common/Logo';
@@ -15,7 +14,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { cn } from '../../utils/cn';
 
 export default function Sidebar() {
-    const { sidebarCollapsed, toggleSidebar, mobileSidebarOpen, toggleMobileSidebar } = useLayout();
+    const { sidebarCollapsed, mobileSidebarOpen, setMobileSidebarOpen } = useLayout();
     const { user } = useAuth();
     const role = user?.role;
     const isAdmin        = role === 'admin';
@@ -25,6 +24,14 @@ export default function Sidebar() {
         <aside className={cn('sidebar', sidebarCollapsed && 'sidebar--collapsed', mobileSidebarOpen && 'sidebar--mobile-open')}>
             <div className="sidebar__header">
                 <Logo collapsed={sidebarCollapsed} />
+                <button
+                    type="button"
+                    className="sidebar__mobile-close"
+                    onClick={() => setMobileSidebarOpen(false)}
+                    aria-label="Cerrar menú"
+                >
+                    <X size={18} strokeWidth={2.2} />
+                </button>
             </div>
 
             {/* Inicio — siempre visible */}
@@ -64,23 +71,6 @@ export default function Sidebar() {
                 )}
 
             </nav>
-
-            <button
-                type="button"
-                className="sidebar__collapse"
-                onClick={() => window.innerWidth <= 768 ? toggleMobileSidebar() : toggleSidebar()}
-                aria-label={sidebarCollapsed ? 'Expandir menú' : 'Colapsar menú'}
-                title={sidebarCollapsed ? 'Expandir' : 'Colapsar'}
-            >
-                {sidebarCollapsed ? (
-                    <ChevronsRight size={16} strokeWidth={2.5} />
-                ) : (
-                    <>
-                        <ChevronsLeft size={16} strokeWidth={2.5} />
-                        <span>Colapsar</span>
-                    </>
-                )}
-            </button>
         </aside>
     );
 }

@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use App\Models\Concerns\HasMongoId;
+use Jenssegers\Mongodb\Eloquent\Model;
 
 class Empresa extends Model
 {
-    use HasFactory;
+    use HasMongoId;
+
+    protected $connection = 'mongodb';
+    protected $collection = 'empresas';
 
     protected $fillable = [
         'nombre',
@@ -19,6 +22,6 @@ class Empresa extends Model
 
     public function usuarios()
     {
-        return $this->hasMany(User::class, 'empresa_id');
+        return $this->hasMany(User::class, 'empresa_id', '_id');
     }
 }

@@ -2,31 +2,33 @@ import React, {
     useState, useEffect, useRef, useCallback, memo,
 } from 'react';
 import {
-    StickyNote, CloudSun, Clock3, Bot, KeyRound,
-    Newspaper, Music2,
-    Plus, Trash2, Copy, Check, RefreshCw, Send,
+    StickyNote, CloudSun, Clock3, KeyRound,
+    Newspaper, Music2, Timer,
+    Plus, Trash2, Copy, Check, RefreshCw,
     Wind, Thermometer, User, Loader, ExternalLink,
-    Globe, Search,
+    Globe, Search, X,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import { useLayout } from '../../hooks/useLayout';
 import { listarNotas, crearNota, eliminarNota } from '../../api/endpoints/notas';
-import { claudeChat } from '../../api/endpoints/claude';
+import { pomodoroStats } from '../../api/endpoints/pomodoro';
 import {
     getClientId, setClientId as saveSpClientId, clearClientId,
     getTokens, clearTokens, startAuth, spFetch, REDIRECT_URI,
 } from '../../utils/spotify';
+import SpotifyPlayer from '../spotify/SpotifyPlayer';
 
 /* ─────────────────────────────────────────────────────────────
    TABS CONFIG
 ───────────────────────────────────────────────────────────── */
 const TABS = [
-    { id: 'notes',    icon: StickyNote,  label: 'Notas'   },
-    { id: 'weather',  icon: CloudSun,    label: 'Clima'   },
-    { id: 'clock',    icon: Clock3,      label: 'Reloj'   },
-    { id: 'chat',     icon: Bot,         label: 'IA'      },
-    { id: 'password', icon: KeyRound,    label: 'Clave'   },
-    { id: 'news',     icon: Newspaper,   label: 'Noticias'},
-    { id: 'spotify',  icon: Music2,      label: 'Spotify' },
+    { id: 'notes',    icon: StickyNote, label: 'Notas',    accent: 'var(--acc)',  hint: 'Apuntes rápidos' },
+    { id: 'pomo',     icon: Timer,      label: 'Pomodoro', accent: '#8b5cf6',     hint: 'Sesiones de foco' },
+    { id: 'weather',  icon: CloudSun,   label: 'Clima',    accent: '#3b82f6',     hint: 'Tu zona' },
+    { id: 'clock',    icon: Clock3,     label: 'Reloj',    accent: '#f59e0b',     hint: 'Zonas horarias' },
+    { id: 'password', icon: KeyRound,   label: 'Claves',   accent: '#ec4899',     hint: 'Generador seguro' },
+    { id: 'news',     icon: Newspaper,  label: 'Noticias', accent: '#f97316',     hint: 'Hacker News' },
+    { id: 'spotify',  icon: Music2,     label: 'Spotify',  accent: '#1DB954',     hint: 'Reproductor' },
 ];
 
 /* ─────────────────────────────────────────────────────────────
@@ -231,77 +233,88 @@ function ClockTab() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TAB: CLAUDE CHAT
+   TAB: POMODORO STATS (mini)
 ───────────────────────────────────────────────────────────── */
-function ChatTab() {
-    const [messages, setMessages] = useState([]);
-    const [input,    setInput]    = useState('');
-    const [loading,  setLoading]  = useState(false);
-    const [error,    setError]    = useState('');
-    const endRef = useRef(null);
+function fmtDuration(s) {
+    if (!s) return '0m';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
 
-    useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+function PomodoroTab() {
+    const [stats, setStats]     = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError]     = useState('');
 
-    async function handleSend(e) {
-        e.preventDefault();
-        const text = input.trim();
-        if (!text || loading) return;
-        const userMsg = { role: 'user', content: text };
-        setMessages(p => [...p, userMsg]);
-        setInput('');
-        setLoading(true);
-        setError('');
-        try {
-            const history = [...messages, userMsg];
-            const res = await claudeChat(history);
-            if (res.error) { setError(res.error); }
-            else {
-                const assistantText = res.content?.[0]?.text ?? 'Sin respuesta.';
-                setMessages(p => [...p, { role: 'assistant', content: assistantText }]);
-            }
-        } catch (err) {
-            setError('Error de conexión.');
-        } finally {
-            setLoading(false);
-        }
-    }
+    const load = useCallback(() => {
+        setLoading(true); setError('');
+        pomodoroStats()
+            .then(setStats)
+            .catch(() => setError('No se pudo cargar las estadísticas.'))
+            .finally(() => setLoading(false));
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
 
     return (
-        <div className="rs-panel rs-panel--chat">
-            <div className="chat-messages">
-                {messages.length === 0 && (
-                    <div className="chat-empty">
-                        <Bot size={28} strokeWidth={1.5} />
-                        <span>Hola, soy Claude. En que te puedo ayudar?</span>
-                    </div>
-                )}
-                {messages.map((m, i) => (
-                    <div key={i} className={`chat-msg chat-msg--${m.role}`}>
-                        <div className="chat-msg__bubble">{m.content}</div>
-                    </div>
-                ))}
-                {loading && (
-                    <div className="chat-msg chat-msg--assistant">
-                        <div className="chat-msg__bubble chat-msg__typing">
-                            <span /><span /><span />
+        <div className="rs-panel">
+            <div className="rs-section-header">
+                <span className="rs-section-label" style={{ marginBottom: 0 }}>
+                    <Timer size={11} />Sesiones de foco
+                </span>
+                <button className="rs-icon-btn" onClick={load} disabled={loading} title="Actualizar">
+                    <RefreshCw size={13} strokeWidth={2} className={loading ? 'spinning' : ''} />
+                </button>
+            </div>
+
+            {error && <div className="rs-error">{error}</div>}
+
+            {stats && (
+                <>
+                    <div className="pomo-stats-grid">
+                        <div className="pomo-stat">
+                            <span className="pomo-stat__label">Hoy</span>
+                            <span className="pomo-stat__value">{fmtDuration(stats.today_seconds)}</span>
+                            <span className="pomo-stat__hint">{stats.today_count} sesiones</span>
+                        </div>
+                        <div className="pomo-stat">
+                            <span className="pomo-stat__label">Semana</span>
+                            <span className="pomo-stat__value">{fmtDuration(stats.week_seconds)}</span>
+                            <span className="pomo-stat__hint">{stats.total_count} totales</span>
                         </div>
                     </div>
-                )}
-                {error && <div className="rs-error">{error}</div>}
-                <div ref={endRef} />
-            </div>
-            <form onSubmit={handleSend} className="chat-form">
-                <input
-                    className="chat-form__input"
-                    placeholder="Escribe un mensaje..."
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) handleSend(e); }}
-                />
-                <button type="submit" className="chat-form__send" disabled={loading || !input.trim()} title="Enviar">
-                    <Send size={13} strokeWidth={2.5} />
-                </button>
-            </form>
+
+                    {stats.per_tarea?.length > 0 && (
+                        <>
+                            <div className="rs-section-label" style={{ marginTop: 4 }}>
+                                <Timer size={11} />Tiempo por tarea
+                            </div>
+                            <ul className="pomo-tarea-list">
+                                {stats.per_tarea.map(row => (
+                                    <li key={row.tarea_id} className="pomo-tarea-row">
+                                        <span className="pomo-tarea-row__name">
+                                            {row.tarea?.titulo ?? 'Sin título'}
+                                        </span>
+                                        <span className="pomo-tarea-row__time">{fmtDuration(row.segundos)}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </>
+                    )}
+
+                    {(!stats.per_tarea || stats.per_tarea.length === 0) && (
+                        <div className="notas-empty" style={{ marginTop: 8 }}>
+                            <Timer size={20} strokeWidth={1.5} />
+                            <span>Aún no hay sesiones registradas</span>
+                            <span style={{ fontSize: 10, marginTop: 4, color: 'var(--fg-subtle)' }}>
+                                Inicia un Pomodoro desde el tablero Kanban
+                            </span>
+                        </div>
+                    )}
+                </>
+            )}
         </div>
     );
 }
@@ -568,9 +581,7 @@ function SpotifyTab() {
         ? playlists.filter(p => p.name.toLowerCase().includes(searchQ.toLowerCase()))
         : playlists;
 
-    const embedSrc = selected
-        ? `https://open.spotify.com/embed/playlist/${selected}?utm_source=generator&theme=0`
-        : '';
+    const playlistUri = selected ? `spotify:playlist:${selected}` : '';
 
     /* Fase 1: Configurar Client ID */
     if (phase === 'setup') {
@@ -579,7 +590,10 @@ function SpotifyTab() {
                 <div className="sp-setup__logo">&#127925;</div>
                 <p className="sp-setup__title">Conectar Spotify</p>
                 <p className="sp-setup__desc">
-                    Crea una app gratuita en Spotify for Developers y pega tu Client ID aqui.
+                    Crea una app gratuita en Spotify for Developers y pega tu Client ID aquí.
+                </p>
+                <p className="sp-setup__desc" style={{ color: 'var(--warn)', fontSize: 11 }}>
+                    Nota: el reproductor en navegador requiere cuenta <strong>Spotify Premium</strong>.
                 </p>
                 <ol className="sp-setup__steps">
                     <li>Ve a <strong>developer.spotify.com</strong> y crea una app.</li>
@@ -587,7 +601,7 @@ function SpotifyTab() {
                 </ol>
                 <code className="sp-setup__uri">{REDIRECT_URI}</code>
                 <ol className="sp-setup__steps" start="3">
-                    <li>Marca <strong>Web API</strong>, guarda y copia tu <strong>Client ID</strong>:</li>
+                    <li>Marca <strong>Web API</strong> y <strong>Web Playback SDK</strong>, guarda y copia tu <strong>Client ID</strong>:</li>
                 </ol>
                 {error && <div className="rs-error">{error}</div>}
                 <div className="sp-setup__row">
@@ -721,17 +735,8 @@ function SpotifyTab() {
                 </ul>
             )}
 
-            {/* Reproductor embed */}
-            {embedSrc && (
-                <iframe
-                    key={embedSrc}
-                    src={embedSrc}
-                    className="sp-lib__frame"
-                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                    loading="lazy"
-                    title="Spotify"
-                />
-            )}
+            {/* Reproductor real (Web Playback SDK) */}
+            <SpotifyPlayer playlistUri={playlistUri} />
         </div>
     );
 }
@@ -741,9 +746,9 @@ function SpotifyTab() {
 ───────────────────────────────────────────────────────────── */
 const TAB_COMPONENTS = {
     notes:    NotesTab,
+    pomo:     PomodoroTab,
     weather:  WeatherTab,
     clock:    ClockTab,
-    chat:     ChatTab,
     password: PasswordTab,
     news:     NewsTab,
     spotify:  SpotifyTab,
@@ -752,31 +757,70 @@ const TAB_COMPONENTS = {
 export default function RightSidebarPanel() {
     const [active,  setActive]  = useState('notes');
     const [mounted, setMounted] = useState(new Set(['notes']));
+    const { setRightDrawerOpen } = useLayout();
+
+    const activeTab = TABS.find(t => t.id === active) ?? TABS[0];
+    const activeIdx = TABS.findIndex(t => t.id === active);
 
     function openTab(id) {
         setActive(id);
         setMounted(prev => new Set([...prev, id]));
     }
 
+    /* Pone el accent del tab activo como variable CSS para el header del panel */
+    const rootStyle = { '--rs-accent': activeTab.accent };
+
     return (
-        <div className="rs-panel-root">
-            {/* Tab bar */}
-            <div className="rs-tabs">
-                {TABS.map(({ id, icon: Icon, label }) => (
+        <div className="rs-panel-root" style={rootStyle}>
+            {/* Botón X solo en móvil — cierra el drawer */}
+            <button
+                type="button"
+                className="rs-mobile-close"
+                onClick={() => setRightDrawerOpen(false)}
+                aria-label="Cerrar utilidades"
+            >
+                <X size={18} strokeWidth={2.2} />
+            </button>
+
+            {/* Tab bar con indicador deslizante */}
+            <div className="rs-tabs" role="tablist">
+                <span
+                    className="rs-tabs__indicator"
+                    style={{
+                        '--rs-tab-count': TABS.length,
+                        transform: `translateX(${activeIdx * 100}%)`,
+                        background: activeTab.accent,
+                    }}
+                    aria-hidden="true"
+                />
+                {TABS.map(({ id, icon: Icon, label, accent }) => (
                     <button
                         key={id}
                         type="button"
+                        role="tab"
+                        aria-selected={active === id}
                         className={`rs-tab ${active === id ? 'rs-tab--active' : ''}`}
                         onClick={() => openTab(id)}
                         title={label}
+                        style={{ '--rs-tab-accent': accent }}
                     >
-                        <Icon size={14} strokeWidth={active === id ? 2.5 : 2} />
-                        <span>{label}</span>
+                        <Icon size={15} strokeWidth={active === id ? 2.4 : 1.8} />
                     </button>
                 ))}
             </div>
 
-            {/* Tab panels - mounted once, hidden via CSS */}
+            {/* Header del panel con accent color del tab activo */}
+            <div className="rs-panel-head" key={`head-${active}`}>
+                <div className="rs-panel-head__icon">
+                    <activeTab.icon size={14} strokeWidth={2.4} />
+                </div>
+                <div className="rs-panel-head__text">
+                    <span className="rs-panel-head__title">{activeTab.label}</span>
+                    <span className="rs-panel-head__hint">{activeTab.hint}</span>
+                </div>
+            </div>
+
+            {/* Tab panels - se montan una sola vez, se ocultan vía CSS */}
             <div className="rs-panels">
                 {TABS.map(({ id }) => {
                     const Comp = TAB_COMPONENTS[id];

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Empresa;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 
 class UsuarioController extends Controller
 {
@@ -13,13 +15,23 @@ class UsuarioController extends Controller
     {
         $authUser = $request->user();
 
-        $query = User::with('empresa:id,nombre')->latest();
+        $query = User::query()->orderBy('created_at', 'desc');
 
         if ($authUser->role !== 'admin') {
             $query->where('empresa_id', $authUser->empresa_id);
         }
 
-        return $query->get(['id', 'name', 'email', 'role', 'empresa_id', 'created_at']);
+        $users = $query->get(['_id', 'name', 'email', 'role', 'empresa_id', 'created_at']);
+
+        // Hidratar empresa
+        $ids = $users->pluck('empresa_id')->filter()->unique()->all();
+        $empresas = Empresa::whereIn('_id', $ids)->get(['_id', 'nombre'])->keyBy('id');
+
+        $users->each(function ($u) use ($empresas) {
+            $u->setRelation('empresa', $u->empresa_id ? $empresas->get((string) $u->empresa_id) : null);
+        });
+
+        return response()->json($users);
     }
 
     public function store(Request $request)
@@ -29,9 +41,9 @@ class UsuarioController extends Controller
 
         $rules = [
             'name'       => ['required', 'string', 'max:255'],
-            'email'      => ['required', 'email', 'unique:users', 'max:255'],
+            'email'      => ['required', 'email', 'max:255', Rule::unique('mongodb.users', 'email')],
             'password'   => ['required', 'string', 'min:8'],
-            'empresa_id' => ['nullable', 'exists:empresas,id'],
+            'empresa_id' => ['nullable', 'string'],
         ];
 
         if (!$isAdminEmpresa) {
@@ -39,6 +51,10 @@ class UsuarioController extends Controller
         }
 
         $validated = $request->validate($rules);
+
+        if (!empty($validated['empresa_id']) && !Empresa::where('_id', $validated['empresa_id'])->exists()) {
+            return response()->json(['error' => 'empresa_id inválido'], 422);
+        }
 
         $empresaId = $isAdminEmpresa ? $authUser->empresa_id : ($validated['empresa_id'] ?? null);
         $role      = $isAdminEmpresa ? 'usuario_empresa' : $validated['role'];
@@ -51,19 +67,26 @@ class UsuarioController extends Controller
             'empresa_id' => $empresaId,
         ]);
 
-        $user->load('empresa:id,nombre');
-        return response()->json($user->only(['id', 'name', 'email', 'role', 'empresa_id', 'created_at']) + ['empresa' => $user->empresa], 201);
+        $user->setRelation('empresa', $empresaId ? Empresa::where('_id', $empresaId)->first(['_id', 'nombre']) : null);
+
+        return response()->json($user, 201);
     }
 
-    public function update(Request $request, User $user)
+    public function update(Request $request, $id)
     {
+        $user = User::findOrFail($id);
+
         $validated = $request->validate([
             'name'       => ['required', 'string', 'max:255'],
-            'email'      => ['required', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'email'      => ['required', 'email', 'max:255', Rule::unique('mongodb.users', 'email')->ignore($user->id, '_id')],
             'password'   => ['nullable', 'string', 'min:8'],
             'role'       => ['required', 'in:admin,admin_empresa,usuario_empresa'],
-            'empresa_id' => ['nullable', 'exists:empresas,id'],
+            'empresa_id' => ['nullable', 'string'],
         ]);
+
+        if (!empty($validated['empresa_id']) && !Empresa::where('_id', $validated['empresa_id'])->exists()) {
+            return response()->json(['error' => 'empresa_id inválido'], 422);
+        }
 
         $data = [
             'name'       => $validated['name'],
@@ -77,12 +100,14 @@ class UsuarioController extends Controller
         }
 
         $user->update($data);
-        $user->load('empresa:id,nombre');
-        return response()->json($user->only(['id', 'name', 'email', 'role', 'empresa_id', 'created_at']) + ['empresa' => $user->empresa]);
+        $user->setRelation('empresa', $data['empresa_id'] ? Empresa::where('_id', $data['empresa_id'])->first(['_id', 'nombre']) : null);
+
+        return response()->json($user);
     }
 
-    public function destroy(User $user)
+    public function destroy($id)
     {
+        $user = User::findOrFail($id);
         $user->delete();
         return response()->json(['message' => 'deleted']);
     }

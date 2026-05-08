@@ -18,6 +18,11 @@ export const SCOPES = [
     'user-library-read',
     'user-read-private',
     'user-read-email',
+    /* Web Playback SDK (Premium) */
+    'streaming',
+    'user-read-playback-state',
+    'user-modify-playback-state',
+    'user-read-currently-playing',
 ].join(' ');
 
 /* ─── Client ID ────────────────────────────────────────────── */
@@ -203,4 +208,62 @@ export async function spFetch(path, options = {}) {
 
     const ct = res.headers.get('content-type') ?? '';
     return ct.includes('json') ? res.json() : null;
+}
+
+/* ─── Web Playback SDK helpers ──────────────────────────────── */
+
+/**
+ * Devuelve un access_token válido (refrescando si es necesario).
+ * Lo usa el Web Playback SDK como callback.
+ */
+export async function getAccessToken() {
+    if (isExpired()) await refreshAccessToken();
+    const tokens = getTokens();
+    if (!tokens) throw new Error('Not authenticated');
+    return tokens.access_token;
+}
+
+/**
+ * Carga el script del SDK una sola vez. Resuelve cuando window.Spotify está listo.
+ */
+let sdkPromise = null;
+export function loadSpotifySDK() {
+    if (sdkPromise) return sdkPromise;
+
+    sdkPromise = new Promise((resolve, reject) => {
+        if (window.Spotify) { resolve(window.Spotify); return; }
+
+        // Spotify llama a este global cuando termina de cargar
+        window.onSpotifyWebPlaybackSDKReady = () => resolve(window.Spotify);
+
+        const existing = document.getElementById('spotify-sdk-script');
+        if (existing) return; // se está cargando
+
+        const script = document.createElement('script');
+        script.id    = 'spotify-sdk-script';
+        script.src   = 'https://sdk.scdn.co/spotify-player.js';
+        script.async = true;
+        script.onerror = () => reject(new Error('No se pudo cargar Spotify SDK'));
+        document.body.appendChild(script);
+    });
+
+    return sdkPromise;
+}
+
+/* ─── Player API helpers ────────────────────────────────────── */
+
+/** Transferir reproducción al device del SDK (lo "selecciona" como activo). */
+export async function transferPlayback(deviceId, play = false) {
+    return spFetch('/me/player', {
+        method: 'PUT',
+        body:   { device_ids: [deviceId], play },
+    });
+}
+
+/** Inicia reproducción de un context (playlist/álbum) o tracks específicos en un device. */
+export async function playOn(deviceId, payload = {}) {
+    return spFetch(`/me/player/play?device_id=${deviceId}`, {
+        method: 'PUT',
+        body:   payload, // { context_uri } | { uris: [...] } | { context_uri, offset: { uri: ... } }
+    });
 }
